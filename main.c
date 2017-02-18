@@ -47,6 +47,7 @@
 /* Function prototypes */
 void FindPeak(uint16_t low_thresh, uint16_t high_thresh);
 void SenseClaps(void);
+void ProcessPeriods(void);
 void SenseBeats(void);
 void SetColor(void);
 void ChooseColor(uint16_t beat_size);
@@ -101,6 +102,8 @@ uint16_t Fade_Time = 0u;
 
 /** The minimum value stored in Max_Peaks */
 uint16_t Max_Comp_Peak = 0u;
+/** Set to 1 when timer 2 rolls over */
+uint8_t T2_Rollover = 0u;
 /** The three largest peaks within the last 21 seconds 
       VAL    PERIOD 
     |  X    |  X   |
@@ -156,6 +159,11 @@ int main(int argc, char** argv) {
                 Current_State = CLAP_STATE;
                 break;
         }
+        
+        if(T2_Rollover == 1u)
+        {
+            ProcessPeriods();
+        }
     }
     return (0u);
 }
@@ -170,95 +178,7 @@ void __attribute__((__interrupt__, no_auto_psv)) _T2Interrupt(void)
     
     if(Current_State == BEAT_STATE)
     {
-        uint8_t i = 0u;
-        uint8_t flag = 0u;
-        uint16_t max_peak = 0u;
-        uint8_t period_clear = Curr_Period + 1u;
-        
-        if(period_clear == NUM_STORED_PERIODS)
-        {
-            period_clear = 0u;
-        }
-        
-        for(i = 0u; i < PEAKS_PER_PERIOD; i++)
-        {
-            if(Peaks[Curr_Period][i] > max_peak)
-            {
-                max_peak = Peaks[Curr_Period][i];
-            }
-            
-            // Clear upcoming period
-            Peaks[period_clear][i] = 0u;
-        }
-        
-        for(i = 0; i < NUM_STORED_PEAKS; i++)
-        {
-            if(Max_Peaks[i][1u] == Curr_Period)
-            {
-                // Period remains the same
-                Max_Peaks[i][0u] = max_peak;
-                // Leave loop so periods of zero in the array are not all set
-                i = NUM_STORED_PEAKS;
-                flag = 1u;
-            }
-        }
-        
-        // If peak not already set...
-        if(flag == 0u)
-        {
-            flag = 0u;
-            uint8_t diff = 0u;
-            uint8_t max_diff = 0u;
-            uint8_t comp_period = Curr_Period;
-            uint8_t oldest_period = 0u;
-            for(i = 0u; i < NUM_STORED_PEAKS; i++)
-            {
-                comp_period = Curr_Period;
-                if(comp_period < Max_Peaks[i][1u])
-                {
-                    comp_period += NUM_STORED_PERIODS;
-                }
-                diff = comp_period - Max_Peaks[i][1u];
-                
-                if(diff > max_diff)
-                {
-                    max_diff = diff;
-                    oldest_period = i;
-                }
-                // If the max peak found this period is greater than a stored max peak
-                if(Max_Peaks[i][0u] < max_peak)
-                {
-                    flag = 1u;
-                }
-            }
-            
-            if(flag == 1u)
-            {
-                Max_Peaks[oldest_period][0u] = max_peak;
-                Max_Peaks[oldest_period][1u] = Curr_Period;
-            }
-        }
-        
-        // If a peak is being replaced, find new minimum max peak
-        if(flag == 1u)
-        {
-            uint16_t min_peak = Max_Peaks[0u][0u];
-            for(i = 0; i < NUM_STORED_PEAKS; i++)
-            {
-                if((Max_Peaks[i][0u] < min_peak) && (Max_Peaks[i][0u] != 0u))
-                {
-                    min_peak = Max_Peaks[i][0u];
-                }
-            }
-            
-            Max_Comp_Peak = min_peak;
-        }
-        Peak_Count = 0u;
-        Curr_Period++;
-        if(Curr_Period == NUM_STORED_PERIODS)
-        {
-            Curr_Period = 0u;
-        }
+        T2_Rollover = 1u;
     }
     else
     {
@@ -284,6 +204,104 @@ void _ISR _T2Interrupt(void)
 }
 */
 
+void ProcessPeriods(void)
+{
+    uint8_t i = 0u;
+    uint8_t flag = 0u;
+    uint16_t max_peak = 0u;
+    uint8_t period_clear = Curr_Period + 1u;
+
+    if(period_clear == NUM_STORED_PERIODS)
+    {
+        period_clear = 0u;
+    }
+
+    // Get max peak from current period
+    for(i = 0u; i < PEAKS_PER_PERIOD; i++)
+    {
+        if(Peaks[Curr_Period][i] > max_peak)
+        {
+            max_peak = Peaks[Curr_Period][i];
+        }
+
+        // Clear upcoming period
+        Peaks[period_clear][i] = 0u;
+    }
+
+    // If the current period matches a stored max peak period, replace the max peak
+    for(i = 0; i < NUM_STORED_PEAKS; i++)
+    {
+        if(Max_Peaks[i][1u] == Curr_Period)
+        {
+            // Period remains the same
+            Max_Peaks[i][0u] = max_peak;
+            // Leave loop so periods of zero in the array are not all set
+            i = NUM_STORED_PEAKS;
+            flag = 1u;
+        }
+    }
+
+    // If peak not already set...
+    if(flag == 0u)
+    {
+        flag = 0u;
+        uint8_t diff = 0u;
+        uint8_t max_diff = 0u;
+        uint8_t comp_period = Curr_Period;
+        uint8_t oldest_period = 0u;
+        for(i = 0u; i < NUM_STORED_PEAKS; i++)
+        {
+            comp_period = Curr_Period;
+            if(comp_period < Max_Peaks[i][1u])
+            {
+                comp_period += NUM_STORED_PERIODS;
+            }
+            diff = comp_period - Max_Peaks[i][1u];
+
+            if(diff > max_diff)
+            {
+                max_diff = diff;
+                oldest_period = i;
+            }
+            // If the max peak found this period is greater than a stored max peak
+            if(Max_Peaks[i][0u] < max_peak)
+            {
+                flag = 1u;
+            }
+        }
+
+        if(flag == 1u)
+        {
+            Max_Peaks[oldest_period][0u] = max_peak;
+            Max_Peaks[oldest_period][1u] = Curr_Period;
+        }
+    }
+
+    // If a peak is being replaced, find new minimum max peak
+    if(flag == 1u)
+    {
+        uint16_t min_peak = Max_Peaks[0u][0u];
+        for(i = 0; i < NUM_STORED_PEAKS; i++)
+        {
+            if((Max_Peaks[i][0u] < min_peak) && (Max_Peaks[i][0u] != 0u))
+            {
+                min_peak = Max_Peaks[i][0u];
+            }
+        }
+
+        Max_Comp_Peak = min_peak;
+    }
+    
+    Peak_Count = 0u;
+    T2_Rollover = 0u;
+    
+    Curr_Period++;
+    if(Curr_Period == NUM_STORED_PERIODS)
+    {
+        Curr_Period = 0u;
+    }
+}
+
 /*
     Find beats in the music.
 */
@@ -297,20 +315,29 @@ void SenseBeats(void)
     //static uint16_t beat_buffer[BEAT_BUFF_LENGTH] = {0u};
 
     adc_val = Peripherals_ADC_Convert();
-BTN_POW_O ^= 1u;     // Turn off RA1
+    BTN_POW_O ^= 1u;     // Turn off RA1
     if((adc_val > Max_Comp_Peak))// || ((Max_Comp_Peak - adc_val) < (Max_Comp_Peak / 3)))
     {
-        Peaks[Curr_Period][Peak_Count] = adc_val;
+        // Find top of peak by waiting until the adc reading is less than the previous one.
+        uint16_t prev_adc_val;
+        do
+        {
+            prev_adc_val = adc_val;
+            adc_val = Peripherals_ADC_Convert();
+        } while(prev_adc_val < adc_val);
+        
+        // Set to the highest found value
+        Peaks[Curr_Period][Peak_Count] = prev_adc_val;
         Peak_Count++;
         
-        ChooseColor(adc_val);
+        ChooseColor(prev_adc_val);
 
         // Wait for at least 100ms to ensure the original signal isn't re-sampled
         uint16_t timer_val = TMR2;
         TMR2 = 0u;
         while(TMR2 < (100 * T2_ONE_MS));
         
-        if((timer_val + 100 * T2_ONE_MS) > THREE_QUARTERS_SEC_PERIOD)
+        if(((timer_val + 100 * T2_ONE_MS) > THREE_QUARTERS_SEC_PERIOD) || (Peak_Count == PEAKS_PER_PERIOD))
         {
             IFS0bits.T2IF = 1u;  // Set interrupt flag as the timer would have triggered an interrupt
         }
