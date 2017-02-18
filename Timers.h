@@ -11,7 +11,7 @@
 #include <p33Fxxxx.h>
 #include <stdint.h>
 
-#define T2_ONE_MS           ((uint16_t)78u)
+#define T2_ONE_MS           ((uint16_t)156u)
 #define HALF_SEC_PERIOD     ((uint16_t)38941u)
 #define THREE_QUARTERS_SEC_PERIOD   ((uint16_t)58412)
 
