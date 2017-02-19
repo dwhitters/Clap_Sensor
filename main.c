@@ -34,9 +34,9 @@
 /** PWM channel of the RED LEDs */
 #define RED_CHANNEL     ((uint8_t)1u)
 /** PWM channel of GRN LEDs */
-#define GRN_CHANNEL     ((uint8_t)3u)
+#define GRN_CHANNEL     ((uint8_t)2u)
 /** PWM channel of BLU LEDs */
-#define BLU_CHANNEL     ((uint8_t)2u)
+#define BLU_CHANNEL     ((uint8_t)3u)
 /** Amount of time between fades of the LEDs */
 #define FADE_WAIT       ((uint16_t)(T2_ONE_MS * 15u))
 
@@ -47,7 +47,7 @@
 /* Function prototypes */
 void FindPeak(uint16_t low_thresh, uint16_t high_thresh);
 void SenseClaps(void);
-void ProcessPeriods(void);
+void ProcessPeriod(void);
 void SenseBeats(void);
 void SetColor(void);
 void ChooseColor(uint16_t beat_size);
@@ -113,6 +113,8 @@ uint8_t T2_Rollover = 0u;
 uint16_t Max_Peaks[NUM_STORED_PEAKS][2u];
 uint8_t Curr_Period = 0u;
 uint8_t Peak_Count = 0u;
+/** Just for debugging, REMOVE */
+uint16_t Org_Adc_Val = 0u;
 
 uint16_t Peaks[NUM_STORED_PERIODS][PEAKS_PER_PERIOD];
 /*
@@ -142,8 +144,8 @@ int main(int argc, char** argv) {
     Curr_Color.Grn = 0u;
     Curr_Color.Blu = 0u;
     
-    Curr_Color.Red = 100;
-    Peripherals_PWM_SetDC(RED_CHANNEL, Curr_Color.Red);
+    Curr_Color.Blu = 100;
+    Peripherals_PWM_SetDC(BLU_CHANNEL, Curr_Color.Blu);
 
     while(1u)
     {
@@ -162,7 +164,7 @@ int main(int argc, char** argv) {
         
         if(T2_Rollover == 1u)
         {
-            ProcessPeriods();
+            ProcessPeriod();
         }
     }
     return (0u);
@@ -204,7 +206,7 @@ void _ISR _T2Interrupt(void)
 }
 */
 
-void ProcessPeriods(void)
+void ProcessPeriod(void)
 {
     uint8_t i = 0u;
     uint8_t flag = 0u;
@@ -316,16 +318,24 @@ void SenseBeats(void)
 
     adc_val = Peripherals_ADC_Convert();
     BTN_POW_O ^= 1u;     // Turn off RA1
-    if((adc_val > Max_Comp_Peak))// || ((Max_Comp_Peak - adc_val) < (Max_Comp_Peak / 3)))
+    if((adc_val > Max_Comp_Peak) || ((Max_Comp_Peak - adc_val) < (Max_Comp_Peak / 10u)))
     {
+        Org_Adc_Val = adc_val;
         // Find top of peak by waiting until the adc reading is less than the previous one.
         uint16_t prev_adc_val;
         do
         {
             prev_adc_val = adc_val;
             adc_val = Peripherals_ADC_Convert();
-        } while(prev_adc_val < adc_val);
+        } while((prev_adc_val < adc_val) || 
+                ((Org_Adc_Val > prev_adc_val) && 
+                (Org_Adc_Val - prev_adc_val < ADC_QTR_VOLT)) || 
+                (prev_adc_val - adc_val < ADC_EIGHTH_VOLT));
         
+        if((Org_Adc_Val > prev_adc_val) && (Org_Adc_Val - prev_adc_val < ADC_QTR_VOLT))
+        {
+            prev_adc_val = Org_Adc_Val;
+        }
         // Set to the highest found value
         Peaks[Curr_Period][Peak_Count] = prev_adc_val;
         Peak_Count++;
@@ -387,7 +397,7 @@ void SenseClaps(void)
     Timer_State = SAME_PERIOD;
 
     // Search for a peak
-    FindPeak(FIRST_HIGH_THRESH, LOW_THRESH);
+    FindPeak(LOW_THRESH, FIRST_HIGH_THRESH);
 
     // If another peak is found within the same time period, increment the clap count
     if(SAME_PERIOD == Timer_State)
@@ -399,7 +409,7 @@ void SenseClaps(void)
 /*
     Find a voltage peak. This signifies a beat or a clap.
 
-    @param low_tresh All voltages below this are considered lows.
+    @param low_thresh All voltages below this are considered lows.
     @param high_thresh All voltages above this are considered peaks.
 */
 void FindPeak(uint16_t low_thresh, uint16_t high_thresh)
@@ -410,12 +420,12 @@ void FindPeak(uint16_t low_thresh, uint16_t high_thresh)
     do{
         // Sample until a measurement of interest occurs
         adc_val = Peripherals_ADC_Convert();
-    } while(adc_val < high_thresh);
+    } while((adc_val < high_thresh) && (Current_State == CLAP_STATE));
 
     // Wait for a low
     do{
         adc_val = Peripherals_ADC_Convert();
-    } while(adc_val > low_thresh);
+    } while((adc_val > low_thresh) && (Current_State == CLAP_STATE));
 }
 
 /*
@@ -443,13 +453,9 @@ void ChooseColor(uint16_t beat_size)
                 color = i - 3u;
                 diff = (Max_Comp_Peak / i) - diff;
                 // Break out of the loop
-                i = 0u;
+                i = 2u;
             }
         }
-        
-        // The shade will be used to set the duty cycle. Always between 0 and 100.
-        shade = (diff * 101) / ((Max_Comp_Peak / (color + 3u)) - (Max_Comp_Peak / (color + 4u)));
-        // Set color based on beat_size
     }
     
     switch(color)

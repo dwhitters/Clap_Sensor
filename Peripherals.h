@@ -12,6 +12,7 @@
 #include <p33Fxxxx.h>
 #include <stdint.h>
 
+#define ADC_EIGHTH_VOLT     ((uint16_t)162u)
 #define ADC_QTR_VOLT        ((uint16_t)323u)
 #define ADC_HALF_VOLT        ((uint16_t)646u)
 #define ADC_ONE_VOLT        ((uint16_t)1292u)
