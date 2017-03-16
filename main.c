@@ -210,9 +210,6 @@ void __attribute__((__interrupt__, no_auto_psv)) _T2Interrupt(void)
         AUX_POW_O = 1u;
     }
     
-    MIC_POW_O ^= 1u;
-        AUX_POW_O ^= 1u;
-    
     if(Current_State == BEAT_STATE)
     {
         T2_Rollover = 1u;
