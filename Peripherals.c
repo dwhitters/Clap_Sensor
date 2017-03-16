@@ -94,6 +94,8 @@ void Peripherals_PWM_SetDC(uint8_t channel, uint8_t duty_cycle)
 {
     uint16_t duty_cycle_val;
     
+    duty_cycle = (duty_cycle * 12u) / 10u;
+    
     if(0u == duty_cycle)
     {
         duty_cycle_val = 0u;
@@ -101,7 +103,7 @@ void Peripherals_PWM_SetDC(uint8_t channel, uint8_t duty_cycle)
     else
     {
         // Duty cycle register set to up to double the period. Two added to smooth max PWM.
-        duty_cycle_val = (duty_cycle * ((2u * P1TPERbits.PTPER) / 100u)) + 2u;
+        duty_cycle_val = (duty_cycle * ((2u * P1TPERbits.PTPER) / 100u));
     }
     
     switch(channel)
