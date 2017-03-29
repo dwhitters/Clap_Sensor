@@ -13,11 +13,9 @@
 #include "Timers.h"
 
 /* 1.5 Volts */
-#define FIRST_HIGH_THRESH  (ADC_TWO_VOLT) //((uint16_t)1938u)
-/* 1 Volts */
-#define SECOND_HIGH_THRESH  (ADC_TWO_VOLT)
+#define CLAP_THRESH  (ADC_ONE_VOLT + ADC_HALF_VOLT)
 /* 0.5 Volts */
-#define LOW_THRESH  ((uint16_t)646u)
+#define LOW_THRESH  (ADC_QTR_VOLT)
 
 #define BEAT_BUFF_LENGTH ((uint16_t)300u)
 #define BEAT_THRESH (ADC_ONE_VOLT)
@@ -48,9 +46,9 @@
 #define AUX_POW_I       (PORTAbits.RA4)
 #define AUX_POW_O       (LATAbits.LATA4)
 
-#define MIC_POW_TRIS    (TRISAbits.TRISA2)
-#define MIC_POW_I       (PORTAbits.RA2)
-#define MIC_POW_O       (LATAbits.LATA2)
+#define MIC_POW_TRIS    (TRISBbits.TRISB4)
+#define MIC_POW_I       (PORTBbits.RB4)
+#define MIC_POW_O       (LATBbits.LATB4)
 
 /* Function prototypes */
 void FindPeak(uint16_t low_thresh, uint16_t high_thresh);
@@ -148,18 +146,18 @@ int main(int argc, char** argv) {
     BTN_POW_TRIS = 0u;      // Set RA1 to output
     BTN_POW_O = 1u;         // Set RA1 pin to HIGH
     
+    // Inverse logic to turn on each module
     MIC_POW_TRIS = 0u;
-    MIC_POW_O = 1u;
+    MIC_POW_O = 0u;
     
     AUX_POW_TRIS = 0u;
-    AUX_POW_O = 0u;
+    AUX_POW_O = 1u;
 
     Peripherals_EnableInterrupts();
     Timers_Start();
 
     Curr_Color.Red = 75;
     Curr_Color.Grn = 0u;
-    
     Curr_Color.Blu = 0;
     
     Peripherals_PWM_SetDC(RED_CHANNEL, Curr_Color.Red);
@@ -206,8 +204,8 @@ void __attribute__((__interrupt__, no_auto_psv)) _T2Interrupt(void)
         Current_State = BEAT_STATE;
         Timers_T1_SetInt();
         BTN_POW_O = 0u;     // Turn off RA1
-        MIC_POW_O = 0u;
-        AUX_POW_O = 1u;
+        MIC_POW_O = 1u;
+        AUX_POW_O = 0u;
     }
     
     if(Current_State == BEAT_STATE)
@@ -350,8 +348,9 @@ void SenseBeats(void)
 
     adc_val = Peripherals_ADC_Convert();
     BTN_POW_O ^= 1u;
-    if((adc_val > Max_Comp_Peak) &&
-        adc_val > BEAT_THRESH)
+    if((adc_val > (Max_Comp_Peak - (Max_Comp_Peak / 20))) &&
+        adc_val > BEAT_THRESH &&
+        adc_val < (ADC_TWO_VOLT + ADC_HALF_VOLT))  // Max peak that will be seen. Peaks that are greater are disregarded.
     {
         Org_Adc_Val = adc_val;
         // Find top of peak by waiting until the adc reading is less than the previous one.
@@ -422,16 +421,18 @@ void FadeColor(void)
 */
 void SenseClaps(void)
 {
+    Timer_State = SAME_PERIOD;
+    TMR2 = 0u;
     // Search for a peak
-    FindPeak(LOW_THRESH, FIRST_HIGH_THRESH);
+    FindPeak(LOW_THRESH, CLAP_THRESH);
 
     // Wait for at least 30ms to ensure the original signal isn't re-sampled
     TMR2 = 0u;
-    while(TMR2 < (75 * T2_ONE_MS));
-    Timer_State = SAME_PERIOD;
+    while(TMR2 < (30 * T2_ONE_MS));
+    TMR2 = 0u;
 
     // Search for a peak
-    FindPeak(LOW_THRESH, FIRST_HIGH_THRESH);
+    FindPeak(LOW_THRESH, CLAP_THRESH);
 
     // If another peak is found within the same time period, increment the clap count
     if(SAME_PERIOD == Timer_State)
@@ -450,16 +451,19 @@ void FindPeak(uint16_t low_thresh, uint16_t high_thresh)
 {
     uint16_t adc_val = 0u;
 
-    // Wait for a high
+    // Wait for a high.
+    // If in beat state or a T2 interrupt has occurred, exit.
     do{
         // Sample until a measurement of interest occurs
         adc_val = Peripherals_ADC_Convert();
-    } while((adc_val < high_thresh) && (Current_State == CLAP_STATE));
+    } while((adc_val < high_thresh) && (Current_State == CLAP_STATE) && 
+            (Timer_State == SAME_PERIOD));
 
     // Wait for a low
     do{
         adc_val = Peripherals_ADC_Convert();
-    } while((adc_val > low_thresh) && (Current_State == CLAP_STATE));
+    } while((adc_val > low_thresh) && (Current_State == CLAP_STATE) &&
+            (Timer_State == SAME_PERIOD));
 }
 
 /*

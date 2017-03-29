@@ -13,7 +13,8 @@
 
 #define T2_ONE_MS           ((uint16_t)156u)
 #define HALF_SEC_PERIOD     ((uint16_t)38941u)
-#define THREE_QUARTERS_SEC_PERIOD   ((uint16_t)58412)
+#define THREE_QUARTERS_SEC_PERIOD   ((uint16_t)58412u)
+#define MAX_TIME            ((uint16_t)65535u)
 
 void Timers_Start(void);
 void Timers_Stop(void);
