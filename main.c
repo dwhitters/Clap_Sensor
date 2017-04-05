@@ -13,12 +13,13 @@
 #include "Timers.h"
 
 /* 1.5 Volts */
-#define CLAP_THRESH  (ADC_ONE_VOLT + ADC_HALF_VOLT)
+#define CLAP_THRESH  (ADC_ONE_VOLT)
 /* 0.5 Volts */
 #define LOW_THRESH  (ADC_QTR_VOLT)
 
 #define BEAT_BUFF_LENGTH ((uint16_t)300u)
-#define BEAT_THRESH (ADC_ONE_VOLT)
+/** Voltage spikes must be at least 1.5V to be considered a beat. */
+#define BEAT_THRESH (ADC_ONE_VOLT + ADC_QTR_VOLT)
 
 /** All peaks greater than this set the LED color to white */
 #define MAX_PEAK        ((uint16_t)0xC00u)
@@ -110,6 +111,12 @@ uint16_t Fade_Time = 0u;
 uint16_t Max_Comp_Peak = 0u;
 /** Set to 1 when timer 2 rolls over */
 uint8_t T2_Rollover = 0u;
+uint8_t Curr_Period = 0u;
+uint8_t Peak_Count = 0u;
+/** Just for debugging, REMOVE */
+uint16_t Org_Adc_Val = 0u;
+/** Number used to determine the color and state of the RGB LEDs */
+uint16_t Led_Count = 0u;
 /** The three largest peaks within the last 21 seconds 
       VAL    PERIOD 
     |  X    |  X   |
@@ -117,13 +124,9 @@ uint8_t T2_Rollover = 0u;
     |  X    |  X   |
  */
 uint16_t Max_Peaks[NUM_STORED_PEAKS][2u];
-uint8_t Curr_Period = 0u;
-uint8_t Peak_Count = 0u;
-/** Just for debugging, REMOVE */
-uint16_t Org_Adc_Val = 0u;
-/** Number used to determine the color and state of the RGB LEDs */
-uint16_t Led_Count = 0u;
 
+/** Flag used to restart learning when the song stops playing. */
+uint8_t Song_Off = 1u;
 uint16_t Peaks[NUM_STORED_PERIODS][PEAKS_PER_PERIOD];
 /*
  *
@@ -156,7 +159,7 @@ int main(int argc, char** argv) {
     Peripherals_EnableInterrupts();
     Timers_Start();
 
-    Curr_Color.Red = 75;
+    Curr_Color.Red = 100;
     Curr_Color.Grn = 0u;
     Curr_Color.Blu = 0;
     
@@ -242,6 +245,9 @@ void ProcessPeriod(void)
     uint8_t flag = 0u;
     uint16_t max_peak = 0u;
     uint8_t period_clear = Curr_Period + 1u;
+    
+    // Increment every period. When it reaches 10, learning restarts.
+    Song_Off++;
 
     if(period_clear == NUM_STORED_PERIODS)
     {
@@ -260,58 +266,37 @@ void ProcessPeriod(void)
         Peaks[period_clear][i] = 0u;
     }
 
-    // If the current period matches a stored max peak period, replace the max peak
-    for(i = 0; i < NUM_STORED_PEAKS; i++)
+    uint8_t diff = 0u;
+    uint8_t max_diff = 0u;
+    uint8_t comp_period = Curr_Period;
+    uint8_t oldest_period = 0u;
+    for(i = 0u; i < NUM_STORED_PEAKS; i++)
     {
-        if(Max_Peaks[i][1u] == Curr_Period)
+        comp_period = Curr_Period;
+        if(comp_period < Max_Peaks[i][1u])
         {
-            // Period remains the same
-            Max_Peaks[i][0u] = max_peak;
-            // Leave loop so periods of zero in the array are not all set
-            i = NUM_STORED_PEAKS;
+            comp_period += NUM_STORED_PERIODS;
+        }
+        diff = comp_period - Max_Peaks[i][1u];
+
+        if(diff > max_diff)
+        {
+            max_diff = diff;
+            oldest_period = i;
+        }
+        // If the max peak found this period is greater than a stored max peak
+        if(Max_Peaks[i][0u] < max_peak)
+        {
             flag = 1u;
-        }
-    }
-
-    // If peak not already set...
-    if(flag == 0u)
-    {
-        flag = 0u;
-        uint8_t diff = 0u;
-        uint8_t max_diff = 0u;
-        uint8_t comp_period = Curr_Period;
-        uint8_t oldest_period = 0u;
-        for(i = 0u; i < NUM_STORED_PEAKS; i++)
-        {
-            comp_period = Curr_Period;
-            if(comp_period < Max_Peaks[i][1u])
-            {
-                comp_period += NUM_STORED_PERIODS;
-            }
-            diff = comp_period - Max_Peaks[i][1u];
-
-            if(diff > max_diff)
-            {
-                max_diff = diff;
-                oldest_period = i;
-            }
-            // If the max peak found this period is greater than a stored max peak
-            if(Max_Peaks[i][0u] < max_peak)
-            {
-                flag = 1u;
-            }
-        }
-
-        if(flag == 1u)
-        {
-            Max_Peaks[oldest_period][0u] = max_peak;
-            Max_Peaks[oldest_period][1u] = Curr_Period;
         }
     }
 
     // If a peak is being replaced, find new minimum max peak
     if(flag == 1u)
     {
+        Max_Peaks[oldest_period][0u] = max_peak;
+        Max_Peaks[oldest_period][1u] = Curr_Period;
+            
         uint16_t min_peak = Max_Peaks[0u][0u];
         for(i = 0; i < NUM_STORED_PEAKS; i++)
         {
@@ -322,6 +307,16 @@ void ProcessPeriod(void)
         }
 
         Max_Comp_Peak = min_peak;
+    }
+    
+    // If the song has been off for longer than 2.25 seconds, clear the peaks.
+    if(Song_Off >= 3u)
+    {
+        for(i = 0; i < NUM_STORED_PEAKS; i++)
+        {
+            Max_Peaks[i][0u] = 0u;
+            Max_Peaks[i][1u] = 0u;
+        }
     }
     
     Peak_Count = 0u;
@@ -348,7 +343,7 @@ void SenseBeats(void)
 
     adc_val = Peripherals_ADC_Convert();
     BTN_POW_O ^= 1u;
-    if((adc_val > (Max_Comp_Peak - (Max_Comp_Peak / 20))) &&
+    if((adc_val > (Max_Comp_Peak - (Max_Comp_Peak / 30))) &&
         adc_val > BEAT_THRESH &&
         adc_val < (ADC_TWO_VOLT + ADC_HALF_VOLT))  // Max peak that will be seen. Peaks that are greater are disregarded.
     {
@@ -375,7 +370,7 @@ void SenseBeats(void)
         Led_Count += 100u;
         ChooseColor();
 
-        // Wait for at least 100ms to ensure the original signal isn't re-sampled
+        // Wait for at least 150ms to ensure the original signal isn't re-sampled
         uint16_t timer_val = TMR2;
         TMR2 = 0u;
         while(TMR2 < (150 * T2_ONE_MS));
@@ -389,6 +384,11 @@ void SenseBeats(void)
             // Set timer to what it would have been.
             TMR2 = timer_val + (150 * T2_ONE_MS);
         }
+    }
+    else if((adc_val > (ADC_HALF_VOLT + ADC_QTR_VOLT)) && 
+            (adc_val < (ADC_TWO_VOLT + ADC_HALF_VOLT)))
+    {
+        Song_Off = 0u;
     }
     
     if(FADE_WAIT < (TMR2 - Fade_Time))
